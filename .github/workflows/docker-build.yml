@@ -12,11 +12,20 @@ on:
 
 permissions:
   contents: read
+  packages: write  # Required for GHCR
 
 env:
-  QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
-  REGISTRY: quay.io
-  IMAGE_NAME: broadinstitute/py3-bio
+  # Set to 'true' if custom registry credentials are configured
+  USE_CUSTOM_REGISTRY: ${{ secrets.REGISTRY_USERNAME != '' }}
+
+  # Registry settings (can be overridden via repository variables)
+  # Examples:
+  #   quay.io: REGISTRY=quay.io, IMAGE_NAME=broadinstitute/py3-bio
+  #   Docker Hub: REGISTRY=docker.io, IMAGE_NAME=broadinstitute/py3-bio
+  #   GAR: REGISTRY=us-docker.pkg.dev, IMAGE_NAME=project/repo/py3-bio
+  # Defaults to GHCR with repository name
+  REGISTRY: ${{ vars.REGISTRY || 'ghcr.io' }}
+  IMAGE_NAME: ${{ vars.IMAGE_NAME || github.repository }}
 
 jobs:
   build:
@@ -46,20 +55,28 @@ jobs:
             # For tags, use tag name
             type=ref,event=tag
 
-      - name: Login to Quay.io
-        if: github.event_name == 'push' && env.QUAY_USERNAME != ''
+      - name: Login to custom registry
+        if: github.event_name == 'push' && env.USE_CUSTOM_REGISTRY == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_PASSWORD }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Login to GHCR
+        if: github.event_name == 'push' && env.USE_CUSTOM_REGISTRY != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name == 'push' && env.QUAY_USERNAME != '' }}
+          push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
@@ -67,30 +84,50 @@ jobs:
   cleanup:
     if: github.event_name == 'delete' && github.event.ref_type == 'branch'
     runs-on: ubuntu-latest
+    env:
+      BRANCH_NAME: ${{ github.event.ref }}
     steps:
-      - name: Delete image tag from Quay.io
-        if: env.QUAY_USERNAME != ''
+      - name: Delete tag from custom registry
+        if: env.USE_CUSTOM_REGISTRY == 'true'
         env:
-          QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
-          BRANCH_NAME: ${{ github.event.ref }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
         run: |
-          # Don't try to delete 'latest' tag if main is deleted
+          # Don't delete 'latest' tag if main is deleted
           if [ "$BRANCH_NAME" = "main" ]; then
             echo "Skipping deletion of 'latest' tag for main branch"
             exit 0
           fi
 
-          echo "Deleting tag: $BRANCH_NAME"
+          echo "Deleting tag: $BRANCH_NAME from ${{ env.REGISTRY }}"
 
-          # Delete the tag via Quay.io API
+          # Delete the tag via registry API (Quay.io format - may need adjustment for others)
           response=$(curl -s -w "%{http_code}" -o /tmp/response.txt -X DELETE \
-            -H "Authorization: Bearer $QUAY_PASSWORD" \
-            "https://quay.io/api/v1/repository/${{ env.IMAGE_NAME }}/tag/$BRANCH_NAME")
+            -H "Authorization: Bearer $REGISTRY_PASSWORD" \
+            "https://${{ env.REGISTRY }}/api/v1/repository/${{ env.IMAGE_NAME }}/tag/$BRANCH_NAME")
 
           if [ "$response" = "204" ] || [ "$response" = "404" ]; then
             echo "Tag deleted successfully (or did not exist)"
           else
             echo "Failed to delete tag. Response code: $response"
             cat /tmp/response.txt
-            exit 1
           fi
+
+      - name: Delete tag from GHCR
+        if: env.USE_CUSTOM_REGISTRY != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Don't delete 'latest' tag if main is deleted
+          if [ "$BRANCH_NAME" = "main" ]; then
+            echo "Skipping deletion of 'latest' tag for main branch"
+            exit 0
+          fi
+
+          echo "Deleting tag: $BRANCH_NAME from GHCR"
+          PACKAGE_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+
+          # GHCR tag deletion via gh CLI
+          gh api \
+            -X DELETE \
+            "/user/packages/container/${PACKAGE_NAME}/versions" \
+            -f tag="$BRANCH_NAME" 2>/dev/null || echo "Tag may not exist or deletion not supported"
