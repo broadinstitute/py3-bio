@@ -2,18 +2,26 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [main]
+    branches:
+      - '**'
+    tags:
+      - '**'
   pull_request:
     branches: [main]
+  delete:
 
 permissions:
   contents: read
 
 env:
   QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+  REGISTRY: quay.io
+  IMAGE_NAME: broadinstitute/py3-bio
 
 jobs:
   build:
+    # Don't run on branch deletion events
+    if: github.event_name != 'delete'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -25,11 +33,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # For main branch, use "latest"
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            # For other branches, use branch name
+            type=ref,event=branch,enable=${{ github.ref != 'refs/heads/main' }}
+            # For tags, use tag name
+            type=ref,event=tag
+
       - name: Login to Quay.io
-        if: ${{ github.event_name != 'pull_request' && env.QUAY_USERNAME != '' }}
+        if: github.event_name == 'push' && env.QUAY_USERNAME != ''
         uses: docker/login-action@v3
         with:
-          registry: quay.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
@@ -38,5 +59,38 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' && env.QUAY_USERNAME != '' }}
-          tags: quay.io/broadinstitute/py3-bio:latest
+          push: ${{ github.event_name == 'push' && env.QUAY_USERNAME != '' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # Delete image tag when branch is deleted
+  cleanup:
+    if: github.event_name == 'delete' && github.event.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete image tag from Quay.io
+        if: env.QUAY_USERNAME != ''
+        env:
+          QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
+          BRANCH_NAME: ${{ github.event.ref }}
+        run: |
+          # Don't try to delete 'latest' tag if main is deleted
+          if [ "$BRANCH_NAME" = "main" ]; then
+            echo "Skipping deletion of 'latest' tag for main branch"
+            exit 0
+          fi
+
+          echo "Deleting tag: $BRANCH_NAME"
+
+          # Delete the tag via Quay.io API
+          response=$(curl -s -w "%{http_code}" -o /tmp/response.txt -X DELETE \
+            -H "Authorization: Bearer $QUAY_PASSWORD" \
+            "https://quay.io/api/v1/repository/${{ env.IMAGE_NAME }}/tag/$BRANCH_NAME")
+
+          if [ "$response" = "204" ] || [ "$response" = "404" ]; then
+            echo "Tag deleted successfully (or did not exist)"
+          else
+            echo "Failed to delete tag. Response code: $response"
+            cat /tmp/response.txt
+            exit 1
+          fi
