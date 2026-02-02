@@ -92,6 +92,7 @@ jobs:
       - name: Delete tag from custom registry
         if: env.USE_CUSTOM_REGISTRY == 'true'
         env:
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
         run: |
           set -e  # Exit on any error
@@ -104,19 +105,19 @@ jobs:
 
           echo "Deleting tag: $BRANCH_NAME from ${{ env.REGISTRY }}"
 
-          # Delete the tag via registry API (Quay.io format - may need adjustment for others)
-          response=$(curl -s -w "%{http_code}" -o /tmp/response.txt -X DELETE \
-            -H "Authorization: Bearer $REGISTRY_PASSWORD" \
-            "https://${{ env.REGISTRY }}/api/v1/repository/${{ env.IMAGE_NAME }}/tag/$BRANCH_NAME")
-
-          if [ "$response" = "204" ]; then
+          # Use skopeo to delete the tag (works with Docker credentials)
+          if skopeo delete --creds="${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}" \
+            "docker://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}" 2>&1; then
             echo "Successfully deleted tag: $BRANCH_NAME"
-          elif [ "$response" = "404" ]; then
-            echo "::warning::Tag '$BRANCH_NAME' not found - may have already been deleted or never pushed"
           else
-            echo "::error::Failed to delete tag '$BRANCH_NAME'. Response code: $response"
-            cat /tmp/response.txt
-            exit 1
+            # Check if it was a "not found" error
+            if skopeo inspect --creds="${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}" \
+              "docker://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}" 2>&1 | grep -q "manifest unknown"; then
+              echo "::warning::Tag '$BRANCH_NAME' not found - may have already been deleted or never pushed"
+            else
+              echo "::error::Failed to delete tag '$BRANCH_NAME'"
+              exit 1
+            fi
           fi
 
       - name: Delete tag from GHCR
