@@ -33,8 +33,8 @@ env:
 
 jobs:
   build:
-    # Don't run on branch deletion events
-    if: github.event_name != 'delete'
+    # Don't run on branch deletion or scheduled scan events
+    if: github.event_name != 'delete' && github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
