@@ -9,11 +9,14 @@ on:
       - '**'
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday scan for new CVEs
   delete:
 
 permissions:
   contents: read
   packages: write  # Required for GHCR
+  security-events: write  # Required for GitHub Security tab upload
 
 env:
   # Set to 'true' if custom registry credentials are configured
@@ -30,8 +33,8 @@ env:
 
 jobs:
   build:
-    # Don't run on branch deletion events
-    if: github.event_name != 'delete'
+    # Don't run on branch deletion or scheduled scan events
+    if: github.event_name != 'delete' && github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -84,6 +87,65 @@ jobs:
           outputs: type=image,push=${{ github.event_name == 'push' }},oci-mediatypes=false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Scan the pushed image for vulnerabilities
+  scan:
+    needs: build
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to custom registry
+        if: env.USE_CUSTOM_REGISTRY == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Login to GHCR
+        if: env.USE_CUSTOM_REGISTRY != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine image tag
+        id: tag
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/heads/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pull image
+        run: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+
+      - name: Run Trivy vulnerability scanner (table)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - name: Run Trivy vulnerability scanner (SARIF)
+        uses: aquasecurity/trivy-action@master
+        if: always()
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
 
   # Delete image tag when branch is deleted
   cleanup:
