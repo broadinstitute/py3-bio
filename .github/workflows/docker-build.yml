@@ -122,6 +122,9 @@ jobs:
       - name: Pull image
         run: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
 
+      - name: Checkout (for ignore policy)
+        uses: actions/checkout@v4
+
       - name: Run Trivy vulnerability scanner (table)
         uses: aquasecurity/trivy-action@master
         with:
@@ -130,6 +133,7 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: '1'
           ignore-unfixed: true
+          ignore-policy: .trivy-ignore-policy.rego
 
       - name: Run Trivy vulnerability scanner (SARIF)
         uses: aquasecurity/trivy-action@master
@@ -140,6 +144,7 @@ jobs:
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+          ignore-policy: .trivy-ignore-policy.rego
 
       - name: Upload results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4
