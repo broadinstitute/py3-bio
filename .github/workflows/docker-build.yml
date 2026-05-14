@@ -148,6 +148,7 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
           ignore-unfixed: true
           ignore-policy: .trivy-ignore-policy.rego
 
