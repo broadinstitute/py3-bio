@@ -1,8 +1,10 @@
-FROM python:3.12
+FROM python:3.13
 
 LABEL maintainer "Daniel Park <dpark@broadinstitute.org>"
 
 WORKDIR /
+
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /
 
