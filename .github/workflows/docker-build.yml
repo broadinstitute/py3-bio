@@ -2,6 +2,11 @@ name: Build and Push Docker Image
 
 on:
   workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: 'Bypass GHA layer cache (use after a scheduled Trivy alert to absorb fresh apt patches)'
+        type: boolean
+        default: false
   push:
     branches:
       - '**'
@@ -10,7 +15,7 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    - cron: '0 12 * * *'  # Daily scan for new CVEs
+    - cron: '0 9 * * *'  # Daily scan for new CVEs
   delete:
 
 permissions:
@@ -87,6 +92,7 @@ jobs:
           outputs: type=image,push=${{ github.event_name == 'push' }},oci-mediatypes=false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          no-cache: ${{ inputs.force_rebuild || false }}
 
   # Scan the pushed image for vulnerabilities
   scan:
