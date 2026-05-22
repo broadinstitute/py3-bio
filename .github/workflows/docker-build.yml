@@ -125,7 +125,7 @@ jobs:
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             echo "tag=latest" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=${GITHUB_REF#refs/heads/}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Pull image
