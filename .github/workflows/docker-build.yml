@@ -99,7 +99,7 @@ jobs:
     needs: build
     if: |
       always() &&
-      (github.event_name == 'push' || github.event_name == 'schedule') &&
+      (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
       (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
