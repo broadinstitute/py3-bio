@@ -4,7 +4,7 @@ LABEL maintainer "Daniel Park <dpark@broadinstitute.org>"
 
 WORKDIR /
 
-RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get upgrade -y openssl libssl-dev libssl3t64 openssl-provider-legacy && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /
 
