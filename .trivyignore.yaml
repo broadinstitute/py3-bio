@@ -1,0 +1,9 @@
+vulnerabilities:
+  - id: CVE-2025-47273
+    purls:
+      - "pkg:pypi/setuptools@70.3.0"
+    expired_at: 2027-01-31
+    statement: >-
+      pip 26.2's embedded SBOM identifies its vendored pkg_resources module as
+      setuptools 70.3.0, but the vulnerable setuptools.package_index module is
+      not included. The installed setuptools distribution is 83.0.0.
