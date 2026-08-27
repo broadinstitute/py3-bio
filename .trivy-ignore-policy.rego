@@ -35,8 +35,8 @@
 #   extract vectors from both versions and the rules are written to match
 #   either format.
 #
-# VERSION: 2.0
-# LAST REVIEWED: 2026-03-20
+# VERSION: 2.1
+# LAST REVIEWED: 2026-08-26
 # REVIEW CADENCE: Quarterly, or when platform architecture changes
 #
 
@@ -267,6 +267,45 @@ ignore {
 }
 
 ###############################################################################
+# SECTION 7: KERNEL HEADER PACKAGE (linux-libc-dev)
+#
+# Rationale: linux-libc-dev is a headers-only package. It installs C
+# headers under /usr/include/linux, /usr/include/asm and friends, and
+# ships no kernel, no modules, and no executable code whatsoever.
+# Debian builds it from the `linux` source package, so the binary
+# inherits the kernel source version (e.g. 6.12.101-1) and Trivy
+# attributes every kernel CVE of that version to it.
+#
+# A container never boots a kernel. It executes the HOST kernel, which
+# is patched on the host independently of this image. A kernel bug is
+# therefore not reachable from anything shipped here, regardless of the
+# header version baked into the image.
+#
+# The package also cannot simply be dropped: libc6-dev depends on it,
+# and pysam, pybedtools, pyarrow and zstandard all compile C extensions
+# from source at pip-install time.
+#
+# NOTE: This is a package-scope rule rather than a CVSS rule because the
+# justification is not expressible as a vector. Kernel CVEs frequently
+# carry NO CVSS metrics at all — the kernel CNA does not assign them
+# (CVE-2026-68480 is one such case: NVD publishes an empty metrics set).
+# With no vector, the has_v3_field/has_v4_field helpers below fail on
+# their `cvss_vector != ""` guard, so an entire class of kernel findings
+# is structurally unreachable by every other section in this file.
+# See also note 6 in the closing block.
+#
+# Risk of false negative: Very low. Headers contain no code to exploit.
+# The residual concern is interpretive rather than technical: a green
+# scan must not be read as "the host kernel is patched" — this policy
+# says nothing about the host, which is the platform's responsibility.
+# Confidence: High
+###############################################################################
+
+ignore {
+    input.PkgName == "linux-libc-dev"
+}
+
+###############################################################################
 # HELPER FUNCTIONS: Extract and match CVSS vector strings
 #
 # Trivy's JSON structure nests CVSS data under input.CVSS with vendor
@@ -380,6 +419,13 @@ has_v4_field(vuln, field) {
 #    dangerous even in ephemeral containers. Only AV:L + S:U (Scope
 #    Unchanged) is ignored — see Section 5 above.
 #
+#    This is not in tension with Section 7. A host-kernel escape is
+#    a real risk, but it is a property of the HOST kernel, not of the
+#    header package baked into this image. Suppressing linux-libc-dev
+#    findings removes a signal that never described the host in the
+#    first place; keeping the host patched remains a platform
+#    responsibility that this policy does not and cannot cover.
+#
 # 6. Inbound-listener-only server CVEs — NOT categorically ignored.
 #    Many AV:N CVEs in fat JARs (Jetty, ZooKeeper, Netty server-side)
 #    require an active network listener that we never start. However,
@@ -388,4 +434,14 @@ has_v4_field(vuln, field) {
 #    here would be fragile and is better handled in .trivyignore with
 #    per-CVE justification documenting that the server component is
 #    never instantiated.
+#
+#    CONTRAST with Section 7 (linux-libc-dev), which does match on a
+#    package name. The reasoning there is categorically different:
+#    these Jetty/Netty packages ship running code, and the question
+#    is whether a particular code path is reachable — a per-CVE
+#    judgement that CVSS cannot express and that a blanket package
+#    rule would paper over. linux-libc-dev ships no executable code
+#    at all, so every finding against it is unreachable by
+#    construction, for every CVE, present and future. A package-name
+#    rule is appropriate for the latter shape and not the former.
 ###############################################################################
