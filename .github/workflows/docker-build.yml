@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       force_rebuild:
-        description: 'Bypass GHA layer cache (use after a scheduled Trivy alert to absorb fresh apt patches)'
+        description: 'Bypass GHA layer cache to absorb fresh apt patches. Run from main. See "Responding to a failed vulnerability scan" in README.'
         type: boolean
         default: false
   push:
