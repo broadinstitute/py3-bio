@@ -61,6 +61,15 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # metadata-action defaults to latest=auto, which silently adds a
+          # 'latest' tag on every git tag push regardless of what the tags
+          # block below says. That made `latest` track the most recent tag as
+          # well as main, so tagging anything other than current main (a
+          # hotfix on an old release line, say) would drag `latest` backward
+          # onto that older build. Disable it and let the explicit type=raw
+          # rule below be the only thing that ever produces `latest`.
+          flavor: |
+            latest=false
           tags: |
             # For main branch, use "latest"
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
