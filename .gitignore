@@ -1,0 +1,8 @@
+# Scratch and credential files written into the workspace by cve-autofix.yml.
+# The auto-fix PR step stages with `git add -A`, so these must stay ignored.
+.claude-issues/
+.claude-fix-pr/
+.cve-fix-context/
+gha-creds-*.json
+trivy-results.json
+trivy-results.sarif
