@@ -31,7 +31,7 @@ When a scan of `latest` fails on `main`, `docker-build.yml` hands off to `cve-au
    `cve-fix`). If not, it uploads a `cve-fix-decision-log` artifact explaining why. A
    maintainer comment on a `cve` issue steers the next run.
 
-Step 2 needs credentials. Until they exist it logs a warning and skips. The credentials are:
+Step 2 needs credentials. Any part whose credentials are missing logs a warning and skips: triage needs the GCP variables, and the fix PR also needs the App. The credentials are:
 
 - secrets `AUTOFIX_APP_ID` and `AUTOFIX_APP_PRIVATE_KEY`, for a GitHub App installed on this
   repo with Contents, Pull requests and Issues read/write. App-authored pushes trigger the
