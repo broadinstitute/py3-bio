@@ -7,3 +7,16 @@ vulnerabilities:
       pip 26.2's embedded SBOM identifies its vendored pkg_resources module as
       setuptools 70.3.0, but the vulnerable setuptools.package_index module is
       not included. The installed setuptools distribution is 83.0.0.
+  - id: CVE-2026-97687
+    purls:
+      - "pkg:pypi/urllib3@2.7.0"
+    expired_at: 2026-12-31
+    statement: >-
+      pip 26.2.1 (the latest release; pip main is unchanged) vendors urllib3
+      2.7.0, reported via pip's embedded SBOM. The installed urllib3
+      distribution is 2.8.0. Unlike the setuptools entry above, the vulnerable
+      code is present: pip passes its SSL context as proxy_ssl_context. It is
+      reachable only when pip itself runs in the container through an HTTPS
+      proxy with certificate verification disabled for a target (e.g.
+      --trusted-host); batch pipeline tasks do not invoke pip. Short expiry so
+      this is revisited once pip vendors urllib3 >= 2.8.0 (GHSA-8988-9cw3-xx77).
