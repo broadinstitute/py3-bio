@@ -18,6 +18,30 @@ a fresh `latest`, and rescans it.
 > Dispatch only from `main`. On any other branch nothing is pushed, but the scan job still
 > runs and fails when it tries to pull the tag.
 
+### Automated response (`cve-autofix.yml`)
+
+When a scan of `latest` fails on `main`, `docker-build.yml` hands off to `cve-autofix.yml`:
+
+1. **Scheduled or push scan fails:** it dispatches the `force_rebuild` described above,
+   without a human. That alone clears most findings.
+2. **The scan is still red after that rebuild:** it hands the findings to Claude
+   (Sonnet 5.5 on Vertex AI). Claude files one `cve`-labeled issue per new CVE, then decides
+   whether *every* open `cve` issue can be closed by one PR that only edits
+   `requirements.txt` and/or `.trivyignore.yaml`. If it can, it opens that PR (labeled
+   `cve-fix`). If not, it uploads a `cve-fix-decision-log` artifact explaining why. A
+   maintainer comment on a `cve` issue steers the next run.
+
+Step 2 needs credentials. Any part whose credentials are missing logs a warning and skips: triage needs the GCP variables, and the fix PR also needs the App. The credentials are:
+
+- secrets `AUTOFIX_APP_ID` and `AUTOFIX_APP_PRIVATE_KEY`, for a GitHub App installed on this
+  repo with Contents, Pull requests and Issues read/write. App-authored pushes trigger the
+  required `build`/`scan` checks; `GITHUB_TOKEN` pushes would not.
+- repo variables `GCP_WIP_PROVIDER`, `GCP_SA_EMAIL` and `GCP_PROJECT_ID`, for a service
+  account with Vertex AI access through Workload Identity Federation.
+
+To test step 2 without waiting for a real failure, dispatch *CVE Auto-fix* directly with
+`test_cve_id` set, plus `dry_run` (no issues filed) or `skip_fix_pr`.
+
 ### Do not "fix" a CVE by editing the Dockerfile apt line
 
 `apt-get upgrade -y` already upgrades *every* installed package. The package names listed on

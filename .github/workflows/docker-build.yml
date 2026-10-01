@@ -148,10 +148,36 @@ jobs:
       - name: Checkout (for ignore policy)
         uses: actions/checkout@v6
 
+      # Full-detail JSON for the CVE auto-fix pipeline (cve-autofix.yml). Runs before
+      # the gating table step so it is produced even when that step fails the job.
+      # Includes MEDIUM and unfixed findings as context; cve-autofix.yml selects the
+      # fixable HIGH/CRITICAL ones itself.
+      - name: Run Trivy vulnerability scanner (JSON)
+        # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: 'v0.72.0'
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+          format: json
+          output: trivy-results.json
+          severity: CRITICAL,HIGH,MEDIUM
+          exit-code: '0'
+          ignore-unfixed: false
+          ignore-policy: .trivy-ignore-policy.rego
+          trivyignores: .trivyignore.yaml
+
+      - name: Upload Trivy JSON results
+        uses: actions/upload-artifact@v6
+        with:
+          name: trivy-results
+          path: trivy-results.json
+
       - name: Run Trivy vulnerability scanner (table)
         # v0.36.0
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
+          # Pins the scanner binary independently of the action wrapper's default.
+          version: 'v0.72.0'
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
           format: table
           severity: CRITICAL,HIGH
@@ -165,6 +191,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         if: always()
         with:
+          version: 'v0.72.0'
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
           format: sarif
           output: trivy-results.sarif
@@ -179,6 +206,25 @@ jobs:
         if: always()
         with:
           sarif_file: trivy-results.sarif
+
+  # Respond to a failed scan of `latest`. A scheduled or push failure dispatches a
+  # force_rebuild (the README's manual fix); a failure that survives that rebuild is
+  # handed to the Claude triage + auto-fix PR pipeline. See cve-autofix.yml.
+  autofix:
+    needs: scan
+    if: always() && needs.scan.result == 'failure' && github.ref == 'refs/heads/main'
+    permissions:
+      actions: write        # dispatch the force_rebuild run
+      contents: write       # push the auto-fix branch (via the App token)
+      pull-requests: write  # open the auto-fix PR
+      issues: write         # file CVE triage issues
+      id-token: write       # OIDC to GCP for Vertex AI
+      packages: read
+    uses: ./.github/workflows/cve-autofix.yml
+    with:
+      trigger_event: ${{ github.event_name }}
+      force_rebuild: ${{ inputs.force_rebuild || false }}
+    secrets: inherit
 
   # Delete image tag when branch is deleted
   cleanup:
