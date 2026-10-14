@@ -226,6 +226,143 @@ jobs:
       force_rebuild: ${{ inputs.force_rebuild || false }}
     secrets: inherit
 
+  # Track a red scan of `latest` as a `scan-red` issue, so every failure also ends in
+  # a notification. GitHub emails a run's result only to whoever triggered it, and the
+  # autofix job's force_rebuild is triggered by github-actions[bot], so on its own a
+  # rebuild that clears the scan (or fails to) notifies nobody. Opens the issue on a red
+  # scan, comments once if a force_rebuild doesn't clear it, and closes it on the next
+  # clean scan of `latest` from any trigger.
+  scan-issue:
+    needs: [build, scan]
+    if: |
+      always() && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Download scan results
+        if: needs.scan.result == 'failure'
+        # A scan that fails before producing results (e.g. pulling the image) still
+        # gets an issue, just without the findings table.
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: trivy-results
+          path: .
+
+      - name: Open, update or close the scan-red issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          SCAN_RESULT: ${{ needs.scan.result }}
+          FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          image="$REGISTRY/$IMAGE_NAME:latest"
+          # Lets a later rebuild see that one already commented, so a scan that stays
+          # red for days doesn't add a comment (and an email) every day.
+          marker='<!-- scan-red:rebuild-not-enough -->'
+          rebuild=false
+          run_link="[run $GITHUB_RUN_ID]($RUN_URL) ($GITHUB_EVENT_NAME)"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$FORCE_REBUILD" = true ]; then
+            rebuild=true
+            run_link="[run $GITHUB_RUN_ID]($RUN_URL) (force_rebuild)"
+          fi
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --label scan-red --state open \
+            --json number --jq '.[].number' | sort -n)
+
+          if [ "$SCAN_RESULT" = success ]; then
+            for n in $open; do
+              gh issue close "$n" --repo "$GITHUB_REPOSITORY" --reason completed \
+                --comment "The scan of \`$image\` is clean again in $run_link."
+            done
+            exit 0
+          fi
+
+          # Same selection as the gating table step and cve-autofix.yml's triage job:
+          # fixable HIGH/CRITICAL, one row per CVE.
+          findings() {
+            local rows=''
+            if [ -s trivy-results.json ]; then
+              rows=$(jq -r '
+                # Score from the source .trivy-ignore-policy.rego reads its vector
+                # from: nvd, then redhat, then ghsa, then any other.
+                def cvss:
+                  (.CVSS // {}) as $c
+                  | (["nvd", "redhat", "ghsa"] + ($c | keys)) as $order
+                  | first(($order[] as $k | $c[$k].V3Score // empty | "\(.) (\($k))"),
+                          ($order[] as $k | $c[$k].V40Score // empty | "\(.) (\($k), v4)"))
+                    // "n/a";
+                [.Results[]?.Vulnerabilities[]?
+                  | select((.Severity == "HIGH" or .Severity == "CRITICAL")
+                           and (.FixedVersion // "") != "")]
+                | group_by(.VulnerabilityID)[]
+                | "| \(.[0].VulnerabilityID) | \(.[0].Severity) | \(.[0] | cvss) | \(.[0].Title // "" | gsub("\\|"; "\\|")) | \([.[].PkgName] | unique | map("`\(.)`") | join(", ")) | \(.[0].InstalledVersion) → \(.[0].FixedVersion) |"
+              ' trivy-results.json)
+            fi
+            if [ -z "$rows" ]; then
+              echo "_No fixable HIGH/CRITICAL findings in the scan results, so the scan may have failed for another reason. See the run log._"
+            else
+              echo "| CVE | Severity | CVSS | Title | Packages | Installed → fixed |"
+              echo "|---|---|---|---|---|---|"
+              echo "$rows"
+            fi
+          }
+
+          if [ "$SCAN_RESULT" = failure ] && [ -z "$open" ]; then
+            gh label create scan-red --color D93F0B \
+              --description "Trivy scan of latest is failing; closes itself on the next clean scan" \
+              --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+            if [ "$rebuild" = true ]; then
+              next="A no-cache rebuild did not clear these, so the \`autofix\` job hands them to Claude triage, which files a \`cve\` issue per new CVE."
+            else
+              next="The \`autofix\` job in that run dispatches a no-cache rebuild (\`force_rebuild\`), which clears most failures."
+            fi
+            {
+              echo "The Trivy scan of \`$image\` failed in $run_link."
+              echo
+              findings
+              echo
+              echo "$next This issue closes itself, with a comment, on the next clean scan of \`latest\`."
+            } > scan-red-body.md
+            gh issue create --repo "$GITHUB_REPOSITORY" --label scan-red \
+              --title "Trivy scan of latest is failing (since $(date -u +%Y-%m-%d))" \
+              --body-file scan-red-body.md
+            exit 0
+          fi
+
+          # From here on, only a force_rebuild that didn't clear an open issue comments.
+          if [ "$rebuild" != true ] || [ -z "$open" ]; then
+            exit 0
+          fi
+          n=$(echo "$open" | head -1)
+          already=$(gh issue view "$n" --repo "$GITHUB_REPOSITORY" --json comments \
+            | jq --arg m "$marker" '[.comments[].body | select(contains($m))] | length')
+          if [ "$already" != 0 ]; then
+            echo "::notice::#$n already has a comment about a rebuild that didn't clear it; not adding another."
+            exit 0
+          fi
+          if [ "$SCAN_RESULT" = failure ]; then
+            {
+              echo "$marker"
+              echo "The no-cache rebuild in $run_link did not clear the scan. Still failing:"
+              echo
+              findings
+              echo
+              echo "The \`autofix\` job hands these to Claude triage, which files a \`cve\` issue per new CVE."
+            } > scan-red-body.md
+          elif [ "$BUILD_RESULT" = failure ]; then
+            {
+              echo "$marker"
+              echo "The no-cache rebuild in $run_link failed to build, so \`latest\` was not republished and is still failing. This needs a maintainer."
+            } > scan-red-body.md
+          else
+            exit 0
+          fi
+          gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body-file scan-red-body.md
+
   # Delete image tag when branch is deleted
   cleanup:
     if: github.event_name == 'delete' && github.event.ref_type == 'branch'

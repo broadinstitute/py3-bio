@@ -31,6 +31,12 @@ When a scan of `latest` fails on `main`, `docker-build.yml` hands off to `cve-au
    `cve-fix`). If not, it uploads a `cve-fix-decision-log` artifact explaining why. A
    maintainer comment on a `cve` issue steers the next run.
 
+A red scan of `latest` also opens a `scan-red` issue listing the findings. GitHub emails
+a run's result only to whoever triggered it, and step 1's rebuild is triggered by
+`github-actions[bot]`, so without the issue a rebuild's outcome reaches nobody. The next
+clean scan of `latest`, whatever triggered it, closes the issue with a comment. If a
+rebuild doesn't clear the scan, the issue gets one comment saying so and stays open.
+
 Step 2 needs credentials. Any part whose credentials are missing logs a warning and skips: triage needs the GCP variables, and the fix PR also needs the App. The credentials are:
 
 - secrets `AUTOFIX_APP_ID` and `AUTOFIX_APP_PRIVATE_KEY`, for a GitHub App installed on this
