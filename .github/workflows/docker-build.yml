@@ -287,18 +287,26 @@ jobs:
             local rows=''
             if [ -s trivy-results.json ]; then
               rows=$(jq -r '
+                # Score from the source .trivy-ignore-policy.rego reads its vector
+                # from: nvd, then redhat, then ghsa, then any other.
+                def cvss:
+                  (.CVSS // {}) as $c
+                  | (["nvd", "redhat", "ghsa"] + ($c | keys)) as $order
+                  | first(($order[] as $k | $c[$k].V3Score // empty | "\(.) (\($k))"),
+                          ($order[] as $k | $c[$k].V40Score // empty | "\(.) (\($k), v4)"))
+                    // "n/a";
                 [.Results[]?.Vulnerabilities[]?
                   | select((.Severity == "HIGH" or .Severity == "CRITICAL")
                            and (.FixedVersion // "") != "")]
                 | group_by(.VulnerabilityID)[]
-                | "| \(.[0].VulnerabilityID) | \(.[0].Severity) | \([.[].PkgName] | unique | map("`\(.)`") | join(", ")) | \(.[0].InstalledVersion) | \(.[0].FixedVersion) |"
+                | "| \(.[0].VulnerabilityID) | \(.[0].Severity) | \(.[0] | cvss) | \(.[0].Title // "" | gsub("\\|"; "\\|")) | \([.[].PkgName] | unique | map("`\(.)`") | join(", ")) | \(.[0].InstalledVersion) → \(.[0].FixedVersion) |"
               ' trivy-results.json)
             fi
             if [ -z "$rows" ]; then
               echo "_No fixable HIGH/CRITICAL findings in the scan results, so the scan may have failed for another reason. See the run log._"
             else
-              echo "| CVE | Severity | Packages | Installed | Fixed |"
-              echo "|---|---|---|---|---|"
+              echo "| CVE | Severity | CVSS | Title | Packages | Installed → fixed |"
+              echo "|---|---|---|---|---|---|"
               echo "$rows"
             fi
           }
