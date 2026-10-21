@@ -1,0 +1,25 @@
+# The Dockerfile's `COPY . /` ships the whole build context to / in the image,
+# so anything not excluded here lands in every image.
+
+# Git metadata and CI config. .git also differs between checkouts (branch vs
+# tag, runner temp paths), which is pure noise in the image.
+.git
+.github
+.gitignore
+.dockerignore
+.trivy-ignore-policy.rego
+.trivyignore.yaml
+
+# Scratch and credential files cve-autofix.yml writes into the workspace
+# (same list as .gitignore). No job builds the image in that workspace today;
+# this keeps it that way if one ever does.
+.claude-issues/
+.claude-fix-pr/
+.cve-fix-context/
+gha-creds-*.json
+trivy-results.json
+trivy-results.sarif
+
+# Local tooling, for `docker build .` on a developer machine.
+.claude/
+.DS_Store
